@@ -17,7 +17,7 @@ final duration = await player.setUrl(           // Load a URL
 player.play();                                  // Play without waiting for completion
 await player.play();                            // Play while waiting for completion
 await player.pause();                           // Pause but remain ready to play
-await player.seek(Duration(second: 10));        // Jump to the 10 second position
+await player.seek(Duration(seconds: 10));       // Jump to the 10 second position
 await player.setSpeed(2.0);                     // Twice as fast
 await player.setVolume(0.5);                    // Half as loud
 await player.stop();                            // Stop and free resources
@@ -436,7 +436,7 @@ Please also consider pressing the thumbs up button at the top of [this page](htt
 | read from file                 | ✅      | ✅  | ✅    | ✅  | ✅      | ✅    |
 | read from asset                | ✅      | ✅  | ✅    | ✅  | ✅      | ✅    |
 | read from byte stream          | ✅      | ✅  | ✅    | ✅  | ✅      | ✅    |
-| request headers                | ✅      | ✅  | ✅    |     | ✅      | ✅    |
+| request headers                | ✅      | ✅  | ✅    | *   | ✅      | ✅    |
 | DASH                           | ✅      |     |       |     | ✅      | ✅    |
 | HLS                            | ✅      | ✅  | ✅    |     | ✅      | ✅    |
 | ICY metadata                   | ✅      | ✅  | ✅    |     |         |       |
@@ -455,6 +455,9 @@ Please also consider pressing the thumbs up button at the top of [this page](htt
 | skip silence                   | ✅      |     |       |     |         |       |
 | equalizer                      | ✅      |     |       |     |         | ✅    |
 | volume boost                   | ✅      |     |       |     |         | ✅    |
+
+(*): While request headers cannot be set directly on Web, cookies can be used to send information in the [Cookie header](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cookie). See also `AudioPlayer.setWebCrossOrigin` to allow sending cookies when loading audio files from the same origin or a different origin.
+
 
 ## Experimental features
 

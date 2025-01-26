@@ -1,3 +1,15 @@
+## 0.0.1-beta.14
+
+* Fix shuffleOrder when mutating ConcatenatingAudioSource (@jonmarkhall).
+
+## 0.0.1-beta.13
+
+* Support rxdart 0.28.x.
+
+## 0.0.1-beta.12
+
+* Support setWebCrossOrigin.
+
 ## 0.0.1-beta.11
 
 * Pass through missing API methods.

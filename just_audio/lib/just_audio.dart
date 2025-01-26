@@ -97,6 +97,11 @@ class AudioPlayer {
   /// subscribe to the new platform's events.
   StreamSubscription<PlayerDataMessage>? _playerDataSubscription;
 
+  StreamSubscription<AndroidAudioAttributes>?
+      _androidAudioAttributesSubscription;
+  StreamSubscription<void>? _becomingNoisyEventSubscription;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionEventSubscription;
+
   final String _id;
   final _proxy = _ProxyHttpServer();
   AudioSource? _audioSource;
@@ -138,6 +143,7 @@ class AudioPlayer {
   bool _playInterrupted = false;
   bool _platformLoading = false;
   AndroidAudioAttributes? _androidAudioAttributes;
+  WebCrossOrigin? _webCrossOrigin;
   final bool _androidApplyAudioAttributes;
   final bool _handleAudioSessionActivation;
 
@@ -284,7 +290,7 @@ class AudioPlayer {
     // Respond to changes to AndroidAudioAttributes configuration.
     if (androidApplyAudioAttributes && _isAndroid()) {
       AudioSession.instance.then((audioSession) {
-        audioSession.configurationStream
+        _androidAudioAttributesSubscription = audioSession.configurationStream
             .map((conf) => conf.androidAudioAttributes)
             .where((attributes) => attributes != null)
             .cast<AndroidAudioAttributes>()
@@ -294,10 +300,12 @@ class AudioPlayer {
     }
     if (handleInterruptions) {
       AudioSession.instance.then((session) {
-        session.becomingNoisyEventStream.listen((_) {
+        _becomingNoisyEventSubscription =
+            session.becomingNoisyEventStream.listen((_) {
           pause();
         });
-        session.interruptionEventStream.listen((event) {
+        _interruptionEventSubscription =
+            session.interruptionEventStream.listen((event) {
           if (event.begin) {
             switch (event.type) {
               case AudioInterruptionType.duck:
@@ -673,7 +681,7 @@ class AudioPlayer {
   /// This is equivalent to:
   ///
   /// ```
-  /// setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers),
+  /// setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers, tag: tag),
   ///     initialPosition: Duration.zero, preload: true);
   /// ```
   ///
@@ -683,9 +691,12 @@ class AudioPlayer {
     Map<String, String>? headers,
     Duration? initialPosition,
     bool preload = true,
+    dynamic tag,
   }) =>
-      setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers),
-          initialPosition: initialPosition, preload: preload);
+      setAudioSource(
+          AudioSource.uri(Uri.parse(url), headers: headers, tag: tag),
+          initialPosition: initialPosition,
+          preload: preload);
 
   /// Convenience method to set the audio source to a file, preloaded by
   /// default, with an initial position of zero by default.
@@ -693,7 +704,7 @@ class AudioPlayer {
   /// This is equivalent to:
   ///
   /// ```
-  /// setAudioSource(AudioSource.uri(Uri.file(filePath)),
+  /// setAudioSource(AudioSource.uri(Uri.file(filePath), tag: tag),
   ///     initialPosition: Duration.zero, preload: true);
   /// ```
   ///
@@ -702,8 +713,9 @@ class AudioPlayer {
     String filePath, {
     Duration? initialPosition,
     bool preload = true,
+    dynamic tag,
   }) =>
-      setAudioSource(AudioSource.file(filePath),
+      setAudioSource(AudioSource.file(filePath, tag: tag),
           initialPosition: initialPosition, preload: preload);
 
   /// Convenience method to set the audio source to an asset, preloaded by
@@ -712,7 +724,7 @@ class AudioPlayer {
   /// For assets within the same package, this is equivalent to:
   ///
   /// ```
-  /// setAudioSource(AudioSource.uri(Uri.parse('asset:///$assetPath')),
+  /// setAudioSource(AudioSource.uri(Uri.parse('asset:///$assetPath'), tag: tag),
   ///     initialPosition: Duration.zero, preload: true);
   /// ```
   ///
@@ -725,9 +737,10 @@ class AudioPlayer {
     String? package,
     bool preload = true,
     Duration? initialPosition,
+    dynamic tag,
   }) =>
       setAudioSource(
-        AudioSource.asset(assetPath, package: package),
+        AudioSource.asset(assetPath, package: package, tag: tag),
         initialPosition: initialPosition,
         preload: preload,
       );
@@ -883,7 +896,8 @@ class AudioPlayer {
   /// original [AudioSource]. If [end] is null, it will be reset to the end of
   /// the original [AudioSource]. This method cannot be called from the
   /// [ProcessingState.idle] state.
-  Future<Duration?> setClip({Duration? start, Duration? end}) async {
+  Future<Duration?> setClip(
+      {Duration? start, Duration? end, dynamic tag}) async {
     if (_disposed) return null;
     _setPlatformActive(true)?.catchError((dynamic e) async => null);
     final duration = await _load(
@@ -894,6 +908,7 @@ class AudioPlayer {
                 child: _audioSource as UriAudioSource,
                 start: start,
                 end: end,
+                tag: tag,
               ));
     return duration;
   }
@@ -1196,6 +1211,29 @@ class AudioPlayer {
         usage: audioAttributes.usage.value));
   }
 
+  /// Set the `crossorigin` attribute on the `<audio>` element backing this
+  /// player instance on web (see
+  /// [HTMLMediaElement crossorigin](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/crossOrigin) ).
+  ///
+  /// If [webCrossOrigin] is null (the initial state), the URL will be fetched
+  /// without CORS. If it is `useCredentials`, a CORS request will be made
+  /// exchanging credentials (via cookies/certificates/HTTP authentication)
+  /// regardless of the origin. If it is 'anonymous', a CORS request will be
+  /// made, but credentials are exchanged only if the URL is fetched from the
+  /// same origin.
+  Future<void> setWebCrossOrigin(WebCrossOrigin? webCrossOrigin) async {
+    if (_disposed) return;
+    if (!kIsWeb && !_isUnitTest()) return;
+
+    await (await _platform).setWebCrossOrigin(
+      SetWebCrossOriginRequest(
+          crossOrigin: webCrossOrigin == null
+              ? null
+              : WebCrossOriginMessage.values[webCrossOrigin.index]),
+    );
+    _webCrossOrigin = webCrossOrigin;
+  }
+
   /// Release all resources associated with this player. You must invoke this
   /// after you are done with the player.
   Future<void> dispose() async {
@@ -1224,6 +1262,9 @@ class AudioPlayer {
     await _pitchSubject.close();
     await _sequenceSubject.close();
     await _shuffleIndicesSubject.close();
+    await _androidAudioAttributesSubscription?.cancel();
+    await _becomingNoisyEventSubscription?.cancel();
+    await _interruptionEventSubscription?.cancel();
   }
 
   /// Switch to using the native platform when [active] is `true` and using the
@@ -1446,6 +1487,11 @@ class AudioPlayer {
                 ? ShuffleModeMessage.all
                 : ShuffleModeMessage.none));
         if (checkInterruption()) return platform;
+        if (kIsWeb && _webCrossOrigin != null) {
+          await platform.setWebCrossOrigin(SetWebCrossOriginRequest(
+            crossOrigin: WebCrossOriginMessage.values[_webCrossOrigin!.index],
+          ));
+        }
         for (var audioEffect in _audioPipeline._audioEffects) {
           await audioEffect._activate(platform);
           if (checkInterruption()) return platform;
@@ -2177,6 +2223,15 @@ abstract class AudioSource {
   ///
   /// If headers are set, just_audio will create a cleartext local HTTP proxy on
   /// your device to forward HTTP requests with headers included.
+  ///
+  /// The [tag] is for associating your app's own data with each audio source,
+  /// e.g. title, cover art, a primary key for your DB. Such data can be
+  /// conveniently retrieved from the tag while rendering the UI.
+  ///
+  /// When using just_audio_background, [tag] must be a MediaItem, a class
+  /// provided by that package. If you wish to have more control over the tag
+  /// for background audio purposes, consider using the plugin audio_service
+  /// instead of just_audio_background.
   static UriAudioSource uri(Uri uri,
       {Map<String, String>? headers, dynamic tag}) {
     bool hasExtension(Uri uri, String extension) =>
@@ -2196,7 +2251,7 @@ abstract class AudioSource {
   /// This is equivalent to:
   ///
   /// ```
-  /// AudioSource.uri(Uri.file(filePath));
+  /// AudioSource.uri(Uri.file(filePath), tag: tag);
   /// ```
   static UriAudioSource file(String filePath, {dynamic tag}) {
     return AudioSource.uri(Uri.file(filePath), tag: tag);
@@ -2207,7 +2262,7 @@ abstract class AudioSource {
   /// For assets within the same package, this is equivalent to:
   ///
   /// ```
-  /// AudioSource.uri(Uri.parse('asset:///$assetPath'));
+  /// AudioSource.uri(Uri.parse('asset:///$assetPath'), tag: tag);
   /// ```
   ///
   /// If the asset is to be loaded from a different package, the [package]
@@ -2478,9 +2533,9 @@ class ConcatenatingAudioSource extends AudioSource {
 
   /// Creates a [ConcatenatingAudioSorce] with the specified [children]. If
   /// [useLazyPreparation] is `true`, children will be loaded/buffered as late
-  /// as possible before needed for playback (currently supported on Android
-  /// only). When [AudioPlayer.shuffleModeEnabled] is `true`, [shuffleOrder]
-  /// will be used to determine the playback order (defaulting to
+  /// as possible before needed for playback (currently supported on Android,
+  /// iOS, MacOS). When [AudioPlayer.shuffleModeEnabled] is `true`,
+  /// [shuffleOrder] will be used to determine the playback order (defaulting to
   /// [DefaultShuffleOrder]).
   ConcatenatingAudioSource({
     required this.children,
@@ -3486,6 +3541,9 @@ class DefaultShuffleOrder extends ShuffleOrder {
 /// An enumeration of modes that can be passed to [AudioPlayer.setLoopMode].
 enum LoopMode { off, one, all }
 
+/// Possible values that can be passed to [AudioPlayer.setWebCrossOrigin].
+enum WebCrossOrigin { anonymous, useCredentials }
+
 /// The stand-in platform implementation to use when the player is in the idle
 /// state and the native platform is deallocated.
 class _IdleAudioPlayer extends AudioPlayerPlatform {
@@ -3581,6 +3639,12 @@ class _IdleAudioPlayer extends AudioPlayerPlatform {
   Future<SetShuffleOrderResponse> setShuffleOrder(
       SetShuffleOrderRequest request) async {
     return SetShuffleOrderResponse();
+  }
+
+  @override
+  Future<SetWebCrossOriginResponse> setWebCrossOrigin(
+      SetWebCrossOriginRequest request) async {
+    return SetWebCrossOriginResponse();
   }
 
   @override
